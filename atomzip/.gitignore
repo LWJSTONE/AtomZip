@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+*.azip
+.DS_Store
+benchmark_results.json
