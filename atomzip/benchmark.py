@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-AtomZip Benchmark — Compare with 7z/LZMA extreme compression.
+AtomZip 基准测试 — 与 LZMA (7z极限) 和 gzip (最佳) 对比
 
-Tests multiple file types: text, binary, structured data, source code, JSON, logs.
-Compares compression ratio, compression time, and decompression time.
+测试多种文件类型: 文本、二进制、结构化数据、源代码、JSON、日志。
+对比压缩比率、压缩时间和解压时间。
 """
 
 import sys
@@ -11,8 +11,8 @@ import os
 import time
 import json
 import lzma
+import gzip
 import tempfile
-import shutil
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,24 +21,20 @@ from codec.decompress import AtomZipDecompressor
 
 
 def benchmark_atomzip(filepath: str, level: int = 9) -> dict:
-    """Benchmark AtomZip compression and decompression."""
+    """测试 AtomZip 压缩和解压。"""
     with open(filepath, 'rb') as f:
         data = f.read()
 
     original_size = len(data)
 
-    # Configure based on level
-    max_rules = {1: 50, 2: 100, 3: 150, 4: 200, 5: 256,
-                 6: 300, 7: 400, 8: 500, 9: 600}.get(level, 600)
+    compressor = AtomZipCompressor(level=level, verbose=False)
 
-    compressor = AtomZipCompressor(max_pattern_rules=max_rules, verbose=False)
-
-    # Compression
+    # 压缩
     start = time.time()
     compressed = compressor.compress(data)
     comp_time = time.time() - start
 
-    # Decompression
+    # 解压
     decompressor = AtomZipDecompressor(verbose=False)
     start = time.time()
     decompressed = decompressor.decompress(compressed)
@@ -50,7 +46,7 @@ def benchmark_atomzip(filepath: str, level: int = 9) -> dict:
         'original_size': original_size,
         'compressed_size': len(compressed),
         'ratio': original_size / max(1, len(compressed)),
-        'space_savings': 100 * (1 - len(compressed) / original_size),
+        'space_savings': 100 * (1 - len(compressed) / max(1, original_size)),
         'comp_time': comp_time,
         'decomp_time': decomp_time,
         'verified': verified,
@@ -58,25 +54,23 @@ def benchmark_atomzip(filepath: str, level: int = 9) -> dict:
 
 
 def benchmark_lzma(filepath: str) -> dict:
-    """Benchmark LZMA/7z extreme compression using Python's lzma module."""
+    """测试 LZMA/7z 极限压缩。"""
     with open(filepath, 'rb') as f:
         data = f.read()
 
     original_size = len(data)
 
-    # LZMA with extreme settings (equivalent to 7z ultra)
-    # FORMAT_XZ supports LZMA2 filter; FORMAT_ALONE only supports LZMA1
     filters = [
         {'id': lzma.FILTER_LZMA2,
          'preset': 9 | lzma.PRESET_EXTREME}
     ]
 
-    # Compression
+    # 压缩
     start = time.time()
     compressed = lzma.compress(data, format=lzma.FORMAT_XZ, filters=filters)
     comp_time = time.time() - start
 
-    # Decompression
+    # 解压
     start = time.time()
     decompressed = lzma.decompress(compressed)
     decomp_time = time.time() - start
@@ -87,7 +81,7 @@ def benchmark_lzma(filepath: str) -> dict:
         'original_size': original_size,
         'compressed_size': len(compressed),
         'ratio': original_size / max(1, len(compressed)),
-        'space_savings': 100 * (1 - len(compressed) / original_size),
+        'space_savings': 100 * (1 - len(compressed) / max(1, original_size)),
         'comp_time': comp_time,
         'decomp_time': decomp_time,
         'verified': verified,
@@ -95,19 +89,18 @@ def benchmark_lzma(filepath: str) -> dict:
 
 
 def benchmark_gzip(filepath: str) -> dict:
-    """Benchmark gzip compression."""
-    import gzip
+    """测试 gzip 最佳压缩。"""
     with open(filepath, 'rb') as f:
         data = f.read()
 
     original_size = len(data)
 
-    # Compression
+    # 压缩
     start = time.time()
     compressed = gzip.compress(data, compresslevel=9)
     comp_time = time.time() - start
 
-    # Decompression
+    # 解压
     start = time.time()
     decompressed = gzip.decompress(compressed)
     decomp_time = time.time() - start
@@ -118,7 +111,7 @@ def benchmark_gzip(filepath: str) -> dict:
         'original_size': original_size,
         'compressed_size': len(compressed),
         'ratio': original_size / max(1, len(compressed)),
-        'space_savings': 100 * (1 - len(compressed) / original_size),
+        'space_savings': 100 * (1 - len(compressed) / max(1, original_size)),
         'comp_time': comp_time,
         'decomp_time': decomp_time,
         'verified': verified,
@@ -129,15 +122,16 @@ def main():
     test_dir = Path(__file__).parent / "tests" / "test_files"
 
     if not test_dir.exists():
-        print(f"Test directory not found: {test_dir}")
+        print(f"测试目录不存在: {test_dir}")
         sys.exit(1)
 
     files = sorted(test_dir.iterdir())
     files = [f for f in files if f.is_file()]
 
-    print("=" * 100)
-    print("AtomZip Benchmark — Comparison with LZMA (7z extreme) and gzip (best)")
-    print("=" * 100)
+    print()
+    print("╔══════════════════════════════════════════════════════════════════════════╗")
+    print("║           AtomZip v3 基准测试 — 与 LZMA (7z极限) 和 gzip 对比          ║")
+    print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
     all_results = []
@@ -145,43 +139,46 @@ def main():
     for filepath in files:
         name = filepath.name
         size = filepath.stat().st_size
-        print(f"--- {name} ({size:,} bytes) ---")
+        print(f"  ▶ {name} ({size:,} 字节)")
 
         # AtomZip
         try:
             az = benchmark_atomzip(str(filepath), level=9)
-            print(f"  AtomZip: {az['compressed_size']:>10,} bytes | "
-                  f"Ratio: {az['ratio']:>6.2f}:1 | "
-                  f"Savings: {az['space_savings']:>5.1f}% | "
-                  f"Comp: {az['comp_time']:.3f}s | Decomp: {az['decomp_time']:.3f}s | "
-                  f"{'OK' if az['verified'] else 'FAIL'}")
+            status = "通过" if az['verified'] else "失败"
+            print(f"    AtomZip: {az['compressed_size']:>10,} 字节 | "
+                  f"比率: {az['ratio']:>6.2f}:1 | "
+                  f"节省: {az['space_savings']:>5.1f}% | "
+                  f"压缩: {az['comp_time']:.3f}s | 解压: {az['decomp_time']:.3f}s | "
+                  f"验证: {status}")
         except Exception as e:
             az = None
-            print(f"  AtomZip: ERROR - {e}")
+            print(f"    AtomZip: 错误 - {e}")
 
-        # LZMA (7z extreme equivalent)
+        # LZMA (7z极限)
         try:
             lz = benchmark_lzma(str(filepath))
-            print(f"  LZMA:    {lz['compressed_size']:>10,} bytes | "
-                  f"Ratio: {lz['ratio']:>6.2f}:1 | "
-                  f"Savings: {lz['space_savings']:>5.1f}% | "
-                  f"Comp: {lz['comp_time']:.3f}s | Decomp: {lz['decomp_time']:.3f}s | "
-                  f"{'OK' if lz['verified'] else 'FAIL'}")
+            status = "通过" if lz['verified'] else "失败"
+            print(f"    LZMA:    {lz['compressed_size']:>10,} 字节 | "
+                  f"比率: {lz['ratio']:>6.2f}:1 | "
+                  f"节省: {lz['space_savings']:>5.1f}% | "
+                  f"压缩: {lz['comp_time']:.3f}s | 解压: {lz['decomp_time']:.3f}s | "
+                  f"验证: {status}")
         except Exception as e:
             lz = None
-            print(f"  LZMA:    ERROR - {e}")
+            print(f"    LZMA:    错误 - {e}")
 
         # gzip
         try:
             gz = benchmark_gzip(str(filepath))
-            print(f"  gzip:    {gz['compressed_size']:>10,} bytes | "
-                  f"Ratio: {gz['ratio']:>6.2f}:1 | "
-                  f"Savings: {gz['space_savings']:>5.1f}% | "
-                  f"Comp: {gz['comp_time']:.3f}s | Decomp: {gz['decomp_time']:.3f}s | "
-                  f"{'OK' if gz['verified'] else 'FAIL'}")
+            status = "通过" if gz['verified'] else "失败"
+            print(f"    gzip:    {gz['compressed_size']:>10,} 字节 | "
+                  f"比率: {gz['ratio']:>6.2f}:1 | "
+                  f"节省: {gz['space_savings']:>5.1f}% | "
+                  f"压缩: {gz['comp_time']:.3f}s | 解压: {gz['decomp_time']:.3f}s | "
+                  f"验证: {status}")
         except Exception as e:
             gz = None
-            print(f"  gzip:    ERROR - {e}")
+            print(f"    gzip:    错误 - {e}")
 
         all_results.append({
             'file': name,
@@ -192,17 +189,19 @@ def main():
         })
         print()
 
-    # Summary table
-    print("\n" + "=" * 100)
-    print("COMPARISON SUMMARY")
-    print("=" * 100)
+    # === 汇总表 ===
+    print()
+    print("╔══════════════════════════════════════════════════════════════════════════╗")
+    print("║                           汇总对比表                                    ║")
+    print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
-    # Table header
-    print(f"{'File':<25} {'Original':>10}  {'AtomZip':>10} {'AZ Ratio':>9}  "
-          f"{'LZMA':>10} {'LZMA Ratio':>10}  "
-          f"{'gzip':>10} {'gzip Ratio':>10}")
-    print("-" * 110)
+    header = (f"{'文件名':<24} {'原始':>10}  "
+              f"{'AtomZip':>10} {'AZ比率':>9}  "
+              f"{'LZMA':>10} {'LZMA比率':>10}  "
+              f"{'gzip':>10} {'gzip比率':>10}")
+    print(header)
+    print("─" * len(header))
 
     for r in all_results:
         az = r['atomzip']
@@ -216,13 +215,13 @@ def main():
         gz_size = f"{gz['compressed_size']:>10,}" if gz else "N/A"
         gz_ratio = f"{gz['ratio']:>9.2f}:1" if gz else "N/A"
 
-        print(f"{r['file']:<25} {r['original_size']:>10,}  "
+        print(f"{r['file']:<24} {r['original_size']:>10,}  "
               f"{az_size} {az_ratio}  "
               f"{lz_size} {lz_ratio}  "
               f"{gz_size} {gz_ratio}")
 
-    # Averages
-    print("\n" + "-" * 110)
+    # 平均值
+    print("─" * len(header))
     az_ratios = [r['atomzip']['ratio'] for r in all_results if r['atomzip']]
     lz_ratios = [r['lzma']['ratio'] for r in all_results if r['lzma']]
     gz_ratios = [r['gzip']['ratio'] for r in all_results if r['gzip']]
@@ -231,14 +230,16 @@ def main():
     lz_avg = f"{sum(lz_ratios)/len(lz_ratios):>9.2f}:1" if lz_ratios else "N/A"
     gz_avg = f"{sum(gz_ratios)/len(gz_ratios):>9.2f}:1" if gz_ratios else "N/A"
 
-    print(f"{'Average Ratio':<25} {'':>10}  {'':>10} {az_avg}  "
+    print(f"{'平均比率':<24} {'':>10}  "
+          f"{'':>10} {az_avg}  "
           f"{'':>10} {lz_avg}  "
           f"{'':>10} {gz_avg}")
 
-    # AtomZip vs LZMA comparison
-    print("\n" + "=" * 100)
-    print("ATOMZIP vs LZMA (7z Extreme) — DETAILED COMPARISON")
-    print("=" * 100)
+    # === AtomZip vs LZMA 详细对比 ===
+    print()
+    print("╔══════════════════════════════════════════════════════════════════════════╗")
+    print("║                  AtomZip vs LZMA (7z极限) 详细对比                     ║")
+    print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
     for r in all_results:
@@ -247,23 +248,19 @@ def main():
         if az and lz:
             size_diff = az['compressed_size'] - lz['compressed_size']
             ratio_pct = (az['ratio'] / lz['ratio'] - 1) * 100
-            speed_comp = az['comp_time'] / max(0.001, lz['comp_time'])
-            speed_decomp = az['decomp_time'] / max(0.001, lz['decomp_time'])
 
             if size_diff < 0:
-                verdict = f"AtomZip SMALLER by {abs(size_diff):,} bytes ({abs(ratio_pct):.1f}% better)"
+                verdict = f"AtomZip 更小 {abs(size_diff):,} 字节 (优 {abs(ratio_pct):.1f}%)"
             else:
-                verdict = f"LZMA smaller by {size_diff:,} bytes ({abs(ratio_pct):.1f}%)"
+                verdict = f"LZMA 更小 {size_diff:,} 字节 (优 {abs(ratio_pct):.1f}%)"
 
             print(f"  {r['file']}:")
             print(f"    {verdict}")
-            print(f"    Comp speed: AtomZip {az['comp_time']:.3f}s vs LZMA {lz['comp_time']:.3f}s "
-                  f"({speed_comp:.1f}x)")
-            print(f"    Decomp speed: AtomZip {az['decomp_time']:.3f}s vs LZMA {lz['decomp_time']:.3f}s "
-                  f"({speed_decomp:.1f}x)")
+            print(f"    压缩速度: AtomZip {az['comp_time']:.3f}s vs LZMA {lz['comp_time']:.3f}s")
+            print(f"    解压速度: AtomZip {az['decomp_time']:.3f}s vs LZMA {lz['decomp_time']:.3f}s")
             print()
 
-    # Save results as JSON for report generation
+    # === 保存JSON结果 ===
     results_json = []
     for r in all_results:
         entry = {
@@ -300,9 +297,9 @@ def main():
         results_json.append(entry)
 
     results_path = Path(__file__).parent / "benchmark_results.json"
-    with open(results_path, 'w') as f:
-        json.dump(results_json, f, indent=2)
-    print(f"\nBenchmark results saved to: {results_path}")
+    with open(results_path, 'w', encoding='utf-8') as f:
+        json.dump(results_json, f, indent=2, ensure_ascii=False)
+    print(f"  测试结果已保存至: {results_path}")
 
 
 if __name__ == '__main__':

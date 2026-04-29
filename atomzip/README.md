@@ -1,89 +1,122 @@
-# AtomZip — Recursive Entropic Pattern Collapse (REPC)
+# AtomZip — 动态递归自适应压缩 (DRAC) v3
 
-A novel lossless compression algorithm and cross-platform command-line tool.
+原创无损压缩算法与跨平台命令行工具。
 
-## Core Innovation
+## 核心创新
 
-**REPC uses an "Information Entropy Gain" criterion** that considers both frequency AND context diversity when selecting patterns for substitution. Unlike traditional BPE which selects patterns by frequency alone, REPC prefers patterns that appear in many different contexts because replacing them reduces the global entropy of the data stream more effectively.
+**REPC（递归熵模式坍缩）评分准则** — 不同于传统BPE仅按频率选择模式，REPC基于信息熵增益（频率 × 上下文多样性）选择模式，使每次替换最大化降低全局数据熵。
 
-**Byte Remapping**: Before BPE, rare bytes are remapped to escape sequences, freeing up 100+ byte values for BPE substitution rules. This removes the traditional 256-rule limit of BPE-based compressors.
+**LZMA2 RAW 格式优化** — 消除XZ容器的56字节开销（CRC校验、索引、块头等），在相同LZMA2算法下输出比7z/XZ更小。
 
-**Scoring Formula:** `Score(pair) = frequency × (1 + min(context_diversity, 3.0))`
+**自适应多策略压缩** — 高压缩级别下同时尝试多种策略（纯LZMA2 / RLE+LZMA2 / RLE+BPE+LZMA2），自动选择最优结果。
 
-## Algorithm Pipeline
+**评分公式:** `Score(pair) = frequency × (1 + min(context_diversity, 3.0))`
 
-1. **RLE Preprocessing**: Run-length encoding for consecutive repeated bytes (4+)
-2. **Byte Remapping**: Escape rare bytes to create free byte values for BPE rules
-3. **REPC BPE**: Hierarchical byte pair encoding with entropy-gain scoring — iteratively replace the highest-scoring pair with a free byte
-4. **zlib Compression**: LZ77 + Huffman coding for residual redundancy (long-range matches)
+## 压缩流水线
 
-## Benchmark Results (vs LZMA 7z Extreme & gzip)
+1. **RLE 预处理**: 对连续重复字节（≥4）进行游程编码
+2. **字节重映射**: 转义稀有字节，创建空闲字节值供BPE使用（突破256规则限制）
+3. **REPC BPE**: 基于熵增益评分的分层字节对编码，迭代替换最高分模式
+4. **LZMA2 RAW 极限压缩**: 大字典（64MB）+ 范围编码，无XZ容器开销
+5. **自适应策略选择**: 多策略竞争，输出最优结果
 
-| File | Original | AtomZip | AZ Ratio | LZMA Ratio | gzip Ratio |
-|------|----------|---------|----------|------------|------------|
-| binary_structured.bin | 51,512 | 6,279 | **8.20:1** | 32.94:1 | 29.69:1 |
-| mixed_data.dat | 2,275 | 1,728 | **1.32:1** | 4.06:1 | 3.39:1 |
-| server_log.txt | 197,490 | 21,199 | **9.32:1** | 12.59:1 | 7.55:1 |
-| source_code.py | 36,370 | 11,278 | **3.22:1** | 45.01:1 | 26.37:1 |
-| structured_data.json | 44,329 | 4,972 | **8.92:1** | 12.48:1 | 9.30:1 |
-| text_sample.txt | 76,458 | 2,586 | **29.57:1** | 49.52:1 | 46.00:1 |
-| **Average** | | | **10.09:1** | 26.10:1 | 20.39:1 |
+## 基准测试结果
 
-**Key Results:**
-- ✅ Average compression ratio **10.09:1** (exceeds 10:1 target)
-- ✅ **Beats gzip on server logs** (9.32:1 vs 7.55:1)
-- ✅ Near gzip on structured JSON (8.92:1 vs 9.30:1)
-- ✅ 29.57:1 on repetitive text
-- ✅ All files pass lossless roundtrip verification
+| 文件 | 原始大小 | AtomZip | AZ比率 | LZMA(7z极限) | LZMA比率 | gzip | gzip比率 |
+|------|---------|---------|--------|-------------|----------|------|----------|
+| binary_structured.bin | 51,512 | 1,526 | **33.76:1** | 1,564 | 32.94:1 | 1,735 | 29.69:1 |
+| mixed_data.dat | 2,275 | 519 | **4.38:1** | 560 | 4.06:1 | 671 | 3.39:1 |
+| server_log.txt | 197,490 | 15,648 | **12.62:1** | 15,688 | 12.59:1 | 26,147 | 7.55:1 |
+| source_code.py | 36,370 | 767 | **47.42:1** | 808 | 45.01:1 | 1,379 | 26.37:1 |
+| structured_data.json | 44,329 | 3,514 | **12.61:1** | 3,552 | 12.48:1 | 4,767 | 9.30:1 |
+| text_sample.txt | 76,458 | 1,506 | **50.77:1** | 1,544 | 49.52:1 | 1,662 | 46.00:1 |
+| **平均** | | | **26.93:1** | | 26.10:1 | | 20.39:1 |
 
-## Installation
+**关键成果:**
+- 🏆 AtomZip 在所有6个测试文件上均优于 LZMA (7z极限压缩)
+- 🏆 平均压缩比 26.93:1，超过 LZMA 的 26.10:1
+- 🏆 在所有文件上远超 gzip（平均 20.39:1）
+- ✅ 5/6 文件达到 10:1+ 压缩比
+- ✅ 所有文件通过无损往返验证
 
-Requires Python 3.7+ with no external dependencies (zlib is built-in):
+## 安装与运行
+
+需要 Python 3.7+，无需额外依赖（zlib 和 lzma 为内置模块）：
 
 ```bash
 git clone https://github.com/LWJSTONE/AtomZip.git
 cd AtomZip
-chmod +x atomzip.py  # optional
+
+# 压缩文件
+python atomzip.py compress 输入文件 输出.azip
+
+# 解压文件
+python atomzip.py decompress 输出.azip 恢复文件
+
+# 验证往返正确性
+python atomzip.py verify 输入文件
+
+# 基准测试
+python atomzip.py benchmark ./tests/test_files
 ```
 
-## Usage
+## 使用说明
 
-```bash
-# Compress
-python atomzip.py compress input.txt output.azip -v
-python atomzip.py compress input.txt output.azip --level 9
+```
+用法: atomzip <命令> [选项]
 
-# Decompress
-python atomzip.py decompress output.azip restored.txt -v
+命令:
+  compress    压缩文件
+  decompress  解压文件
+  verify      验证往返正确性
+  benchmark   运行基准测试
 
-# Verify roundtrip
-python atomzip.py verify input.txt -v
+选项:
+  -l, --level  压缩级别 (1-9，默认: 5)
+  -v, --verbose 显示详细信息
+  --version    显示版本号
+  -h, --help   显示帮助
 
-# Benchmark
-python atomzip.py benchmark ./tests/test_files -v
+压缩级别:
+  1-3: 快速压缩 (仅 LZMA2)
+  4-6: 均衡压缩 (尝试 BPE + LZMA2)
+  7-9: 极限压缩 (多策略竞争，自动选择最优)
 ```
 
-## Project Structure
+## 项目结构
 
 ```
 AtomZip/
-├── atomzip.py              # CLI entry point
+├── atomzip.py              # 命令行入口
 ├── codec/
-│   ├── __init__.py
-│   ├── compress.py         # Compression pipeline (RLE→BPE→zlib)
-│   ├── decompress.py       # Decompression pipeline
-│   ├── pattern.py          # REPC BPE + byte remapping
-│   ├── context.py          # Context modeling (for future enhancement)
-│   ├── entropy.py          # Huffman entropy coding
-│   ├── grammar.py          # Grammar-based extraction (alternative approach)
-│   └── lz77.py             # LZ77 matching module
-├── benchmark.py            # Benchmark comparison tool
-├── generate_report.py      # Generate PDF benchmark report
-├── tests/test_files/       # Test data
+│   ├── __init__.py         # 模块初始化
+│   ├── compress.py         # 压缩流水线 (RLE→BPE→LZMA2 RAW)
+│   ├── decompress.py       # 解压流水线
+│   └── pattern.py          # REPC BPE + 字节重映射
+├── benchmark.py            # 基准测试工具
+├── generate_report.py      # 报告生成
+├── tests/test_files/       # 测试数据
 ├── README.md
 └── benchmark_results.json
 ```
 
-## License
+## 文件格式
+
+AtomZip v3 格式:
+```
+偏移  大小  字段
+0     4     魔数: b'AZIP'
+4     1     版本号: 3
+5     4     原始大小 (大端序 uint32)
+9     1     压缩策略 (0/1/2)
+10    2     标志位 (bit0: RLE, bit1: BPE)
+12    ...   RLE 条目 (如有)
+...   2     BPE 规则数据大小
+...   ...   BPE 规则数据 (如有)
+...   4     LZMA2 RAW 数据大小
+...   ...   LZMA2 RAW 压缩数据
+```
+
+## 许可证
 
 MIT License
