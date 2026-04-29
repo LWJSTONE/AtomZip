@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-AtomZip — 动态递归自适应压缩 (DRAC) 命令行工具
+AtomZip — 动态递归自适应压缩 (DRAC) v4 命令行工具
 
-原创压缩算法，基于 REPC（递归熵模式坍缩）评分准则，
-结合 LZMA 极限压缩实现高压缩比。
+原创压缩算法，基于 BWT 上下文聚簇 + LZMA2 RAW 极限压缩。
+
+核心创新: BWT + LZMA2 (不加 MTF)
+  BWT 将相似上下文的字符聚簇在一起，使 LZMA2 的 LZ77
+  匹配器能找到更长的匹配序列。不同于 bzip2 (BWT+MTF+Huffman)，
+  不加 MTF 是因为 MTF 会打乱字节的空间局部性，反而损害
+  LZMA2 的上下文建模能力。
 
 用法:
   python atomzip.py compress   <输入文件> <输出文件>  [-v] [--level 级别]
@@ -29,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from codec.compress import AtomZipCompressor
 from codec.decompress import AtomZipDecompressor
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 __author__ = "AtomZip Project"
 
 
@@ -179,7 +184,7 @@ def verify_roundtrip(input_path: str, verbose: bool = False) -> bool:
         compressed = os.path.join(tmpdir, 'test.azip')
         decompressed = os.path.join(tmpdir, 'test.out')
 
-        compress_file(str(input_path), compressed, level=5, verbose=False)
+        compress_file(str(input_path), compressed, level=9, verbose=False)
         decompress_file(compressed, decompressed, verbose=False)
 
         with open(input_path, 'rb') as f:
@@ -195,7 +200,6 @@ def verify_roundtrip(input_path: str, verbose: bool = False) -> bool:
                 print(f"  [失败] 往返验证失败!")
                 print(f"    原始大小: {len(original)} 字节")
                 print(f"    结果大小: {len(result)} 字节")
-                # 找到第一个差异位置
                 for i in range(min(len(original), len(result))):
                     if original[i] != result[i]:
                         print(f"    首个差异位置: 字节 {i} "
@@ -226,7 +230,7 @@ def run_benchmark(input_path: str, verbose: bool = False):
 
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
-    print("║              AtomZip v3 基准测试 - 多算法对比                ║")
+    print("║              AtomZip v4 基准测试 - 多算法对比                ║")
     print("╚══════════════════════════════════════════════════════════════╝")
     print(f"  测试文件数: {len(files)}")
     print()
@@ -257,7 +261,6 @@ def run_benchmark(input_path: str, verbose: bool = False):
                 azip_comp_size = os.path.getsize(azip_out)
                 azip_ratio = size / max(1, azip_comp_size)
 
-                # 验证正确性
                 with open(azip_dec, 'rb') as fh:
                     decoded = fh.read()
                 azip_verified = original_data == decoded
@@ -410,7 +413,7 @@ def main():
     """命令行入口。"""
     parser = argparse.ArgumentParser(
         prog='atomzip',
-        description='AtomZip — 动态递归自适应压缩 (DRAC) v3',
+        description='AtomZip — 动态递归自适应压缩 (DRAC) v4',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
@@ -421,14 +424,16 @@ def main():
   atomzip benchmark  ./tests/test_files                基准测试
 
 压缩级别 (1-9):
-  1-3: 快速压缩 (仅 RLE + LZMA)
-  4-6: 均衡压缩 (RLE + BPE + LZMA，默认: 5)
-  7-9: 极限压缩 (多策略竞争，自动选择最优结果)
+  1-3: 快速压缩 (仅 LZMA2)
+  4-6: 均衡压缩 (LZMA2 + Delta，默认: 5)
+  7-9: 极限压缩 (多策略竞争含 BWT，自动选择最优结果)
 
 算法核心创新:
-  REPC（递归熵模式坍缩）评分准则 — 不同于传统BPE仅按频率选择模式，
-  REPC基于信息熵增益(频率 × 上下文多样性)选择模式，使每次替换
-  最大化降低全局数据熵，结合LZMA极限压缩实现高压缩比。
+  BWT 上下文聚簇 + LZMA2 RAW 极限压缩。
+  BWT 将相似上下文的字符聚簇，使 LZMA2 的 LZ77 匹配器能找到
+  更长匹配。不加 MTF（不同于 bzip2），因为 MTF 会打乱字节
+  空间局部性，损害 LZMA2 的上下文建模能力。
+  使用 LZMA2 RAW 格式（无 XZ 容器），节省约 56 字节开销。
 """
     )
 

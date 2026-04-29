@@ -5,8 +5,7 @@ AtomZip v4 往返验证测试
 测试所有压缩策略的无损正确性:
   - 策略0: LZMA2 RAW
   - 策略1: Delta + LZMA2 RAW
-  - 策略2: BWT + MTF + LZMA2 RAW
-  - 策略3: Delta + BWT + MTF + LZMA2 RAW
+  - 策略2: BWT (全文件单块) + LZMA2 RAW
 """
 
 import sys
@@ -66,7 +65,6 @@ def test_each_strategy():
     print("  测试各策略单独压缩/解压")
     print("=" * 60)
 
-    # 生成测试数据
     import random
     random.seed(42)
 
@@ -90,7 +88,6 @@ def test_each_strategy():
                 print(f"  [{status}] {name} (级别 {level}): "
                       f"{len(data)} -> {len(compressed)} 字节, 比率 {ratio:.2f}:1")
                 if not match:
-                    # 找到第一个差异
                     for i in range(min(len(data), len(decompressed))):
                         if data[i] != decompressed[i]:
                             print(f"    首个差异: 位置 {i}, "
@@ -137,49 +134,19 @@ def test_bwt_transform():
             print(f"    结果: {decoded.hex()}")
             return False
 
-    # 分块 BWT
+    # 全文件单块 BWT (block_size=0)
     longer_data = b'The quick brown fox jumps over the lazy dog. ' * 100
-    bwt_data, block_info = bwt_encode(longer_data, block_size=256)
+    bwt_data, block_info = bwt_encode(longer_data, block_size=0)
     decoded = bwt_decode(bwt_data, block_info)
     match = longer_data == decoded
     status = "通过" if match else "失败"
-    print(f"  [{status}] 分块 BWT: {len(longer_data)} 字节, {len(block_info)} 个块")
+    print(f"  [{status}] 全文件单块 BWT: {len(longer_data)} 字节, {len(block_info)} 个块")
     if not match:
         for i in range(min(len(longer_data), len(decoded))):
             if longer_data[i] != decoded[i]:
                 print(f"    首个差异: 位置 {i}")
                 break
         return False
-
-    return True
-
-
-def test_mtf_transform():
-    """单独测试 MTF 变换的正确性。"""
-    print()
-    print("=" * 60)
-    print("  测试 MTF 变换往返")
-    print("=" * 60)
-
-    from codec.transform import mtf_encode, mtf_decode
-
-    test_cases = [
-        (b'banana', "banana"),
-        (b'abracadabra', "abracadabra"),
-        (b'\x00' * 100, "100个零字节"),
-        (bytes(range(256)), "0-255全字节"),
-    ]
-
-    for data, desc in test_cases:
-        encoded = mtf_encode(data)
-        decoded = mtf_decode(encoded)
-        match = data == decoded
-        status = "通过" if match else "失败"
-        print(f"  [{status}] MTF: {desc} ({len(data)} -> {len(encoded)} 字节)")
-        if not match:
-            print(f"    原始: {data[:20].hex()}")
-            print(f"    结果: {decoded[:20].hex()}")
-            return False
 
     return True
 
@@ -205,8 +172,7 @@ def test_delta_transform():
         decoded = delta_decode(encoded, first_byte)
         match = data == decoded
         status = "通过" if match else "失败"
-        print(f"  [{status}] Delta: {desc} (首字节: {first_byte:#x}, "
-              f"差分: {encoded[:10].hex()})")
+        print(f"  [{status}] Delta: {desc} (首字节: {first_byte:#x})")
         if not match:
             print(f"    原始: {data.hex()}")
             print(f"    结果: {decoded.hex()}")
@@ -276,32 +242,22 @@ if __name__ == '__main__':
 
     all_pass = True
 
-    # 测试 BWT 变换
     if not test_bwt_transform():
         all_pass = False
         print("\n!!! BWT 变换测试失败 !!!")
 
-    # 测试 MTF 变换
-    if not test_mtf_transform():
-        all_pass = False
-        print("\n!!! MTF 变换测试失败 !!!")
-
-    # 测试 Delta 变换
     if not test_delta_transform():
         all_pass = False
         print("\n!!! Delta 变换测试失败 !!!")
 
-    # 测试小数据
     if not test_small_data():
         all_pass = False
         print("\n!!! 小数据测试失败 !!!")
 
-    # 测试各策略
     if not test_each_strategy():
         all_pass = False
         print("\n!!! 策略测试失败 !!!")
 
-    # 测试实际文件
     if not test_file_roundtrip():
         all_pass = False
         print("\n!!! 文件往返测试失败 !!!")
@@ -309,11 +265,11 @@ if __name__ == '__main__':
     print()
     if all_pass:
         print("╔══════════════════════════════════════════════════════╗")
-        print("║        所有往返测试通过! ✓                          ║")
+        print("║        所有往返测试通过!                             ║")
         print("╚══════════════════════════════════════════════════════╝")
     else:
         print("╔══════════════════════════════════════════════════════╗")
-        print("║        存在测试失败! ✗                              ║")
+        print("║        存在测试失败!                                 ║")
         print("╚══════════════════════════════════════════════════════╝")
 
     sys.exit(0 if all_pass else 1)

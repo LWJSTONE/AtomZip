@@ -73,20 +73,23 @@ class AtomZipDecompressor:
 
         # === 执行解压 ===
         # 阶段1: LZMA2 RAW 解压
-        filters = _get_lzma_filters(preset=9)
+        # 策略2 使用了自定义字典大小，解压时需要匹配
+        if strategy == 2:
+            dict_size = min(max(1 << 16, original_size), 1 << 28)
+            filters = _get_lzma_filters(9, dict_size=dict_size)
+        else:
+            filters = _get_lzma_filters(preset=9)
+
         intermediate = lzma.decompress(lzma_data, format=lzma.FORMAT_RAW,
                                        filters=filters)
 
         # 阶段2: 根据策略逆变换
         if strategy == 0:
-            # 策略0: 无额外变换
             result = intermediate
         elif strategy == 1:
-            # 策略1: Delta 解码
             first_byte = extra_header[0]
             result = delta_decode(intermediate, first_byte)
         elif strategy == 2:
-            # 策略2: BWT 解码 (不需要 MTF 逆变换)
             block_info, _ = deserialize_block_info(extra_header)
             result = bwt_decode(intermediate, block_info)
         else:

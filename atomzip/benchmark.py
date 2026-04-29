@@ -130,7 +130,7 @@ def main():
 
     print()
     print("╔══════════════════════════════════════════════════════════════════════════╗")
-    print("║           AtomZip v3 基准测试 — 与 LZMA (7z极限) 和 gzip 对比          ║")
+    print("║           AtomZip v4 基准测试 — 与 LZMA (7z极限) 和 gzip 对比          ║")
     print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
@@ -242,6 +242,7 @@ def main():
     print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
+    az_wins = 0
     for r in all_results:
         az = r['atomzip']
         lz = r['lzma']
@@ -251,6 +252,7 @@ def main():
 
             if size_diff < 0:
                 verdict = f"AtomZip 更小 {abs(size_diff):,} 字节 (优 {abs(ratio_pct):.1f}%)"
+                az_wins += 1
             else:
                 verdict = f"LZMA 更小 {size_diff:,} 字节 (优 {abs(ratio_pct):.1f}%)"
 
@@ -259,6 +261,8 @@ def main():
             print(f"    压缩速度: AtomZip {az['comp_time']:.3f}s vs LZMA {lz['comp_time']:.3f}s")
             print(f"    解压速度: AtomZip {az['decomp_time']:.3f}s vs LZMA {lz['decomp_time']:.3f}s")
             print()
+
+    print(f"  AtomZip 在 {az_wins}/{len(all_results)} 个文件上优于 LZMA")
 
     # === 保存JSON结果 ===
     results_json = []
@@ -299,7 +303,7 @@ def main():
     results_path = Path(__file__).parent / "benchmark_results.json"
     with open(results_path, 'w', encoding='utf-8') as f:
         json.dump(results_json, f, indent=2, ensure_ascii=False)
-    print(f"  测试结果已保存至: {results_path}")
+    print(f"\n  测试结果已保存至: {results_path}")
 
 
 if __name__ == '__main__':

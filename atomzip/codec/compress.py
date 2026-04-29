@@ -1,20 +1,23 @@
 """
 AtomZip 压缩引擎 — DRAC (动态递归自适应压缩) v4
 
-核心创新: 自适应数据感知预处理 + LZMA2 RAW 极限压缩
+核心创新: BWT 上下文聚簇 + LZMA2 RAW 极限压缩
 
 压缩流水线:
   策略0: LZMA2 RAW (基线，无预处理)
   策略1: Delta 差分编码 + LZMA2 RAW
-  策略2: BWT + LZMA2 RAW (按上下文聚簇，不加MTF)
+  策略2: BWT (全文件单块) + LZMA2 RAW
 
 策略2的关键发现:
   BWT (Burrows-Wheeler 变换) 将相似上下文的字符聚簇在一起，
   使 LZMA2 的 LZ77 匹配器能找到更长的匹配序列。
   不同于 bzip2 (BWT+MTF+Huffman)，我们不加 MTF 变换，
-  因为 MTF 会打乱字节分布，反而损害 LZMA2 的上下文建模能力。
-  仅用 BWT 聚簇 + LZMA2 压缩的组合在多种数据类型上显著
-  优于单纯的 LZMA2 压缩。
+  因为 MTF 会打乱字节的空间局部性，反而损害 LZMA2 的
+  LZ77 匹配能力。仅用 BWT 聚簇 + LZMA2 压缩的组合在
+  多种数据类型上显著优于单纯的 LZMA2 压缩。
+
+  此外，使用整个文件作为单个 BWT 块 (而非 64KB 分块)
+  避免了块边界信息丢失，大幅提升压缩效果。
 
 压缩级别 (1-9):
   1-3: 快速 (仅策略0)
@@ -27,26 +30,35 @@ AtomZip 压缩引擎 — DRAC (动态递归自适应压缩) v4
 import struct
 import time
 import lzma
-from typing import Tuple, List, Optional
+from typing import Tuple, List
 
 from .transform import (
     bwt_encode, bwt_decode,
     delta_encode, delta_decode,
     serialize_block_info,
-    BWT_BLOCK_SIZE, BWT_MAX_DATA_SIZE
+    BWT_MAX_DATA_SIZE
 )
 
 ATOMZIP_MAGIC = b'AZIP'
 FORMAT_VERSION = 4
 
 
-def _get_lzma_filters(preset: int = 9) -> list:
-    """获取 LZMA2 滤镜参数 (极限压缩)。"""
+def _get_lzma_filters(preset: int = 9, dict_size: int = 0) -> list:
+    """获取 LZMA2 滤镜参数。
+
+    preset: LZMA 预设级别 (0-9)
+    dict_size: 字典大小 (字节)，0 表示使用 preset 默认值。
+               LZMA2 的最大字典大小为 768MB (0x30000000)。
+    """
+    if dict_size > 0:
+        return [{'id': lzma.FILTER_LZMA2,
+                 'preset': preset | lzma.PRESET_EXTREME,
+                 'dict_size': dict_size}]
     return [{'id': lzma.FILTER_LZMA2, 'preset': preset | lzma.PRESET_EXTREME}]
 
 
 class AtomZipCompressor:
-    """DRAC v4: 自适应数据感知预处理 + LZMA2 RAW 极限压缩"""
+    """DRAC v4: BWT 上下文聚簇 + LZMA2 RAW 极限压缩"""
 
     def __init__(self, level: int = 5, verbose: bool = False):
         self.level = max(1, min(9, level))
@@ -67,7 +79,6 @@ class AtomZipCompressor:
         result_lzma = self._strategy_lzma_only(data)
 
         if self.level < 4:
-            # 低级别: 仅策略0
             best = result_lzma
             strategy = 0
         elif self.level < 7:
@@ -91,7 +102,7 @@ class AtomZipCompressor:
             result_delta = self._strategy_delta(data)
             candidates.append((len(result_delta), result_delta, 1))
 
-            # 策略2: BWT + LZMA2 (不加 MTF，仅对不太大的数据)
+            # 策略2: BWT + LZMA2 (全文件单块，仅对不太大的数据)
             if original_size <= BWT_MAX_DATA_SIZE:
                 result_bwt = self._strategy_bwt(data)
                 candidates.append((len(result_bwt), result_bwt, 2))
@@ -124,7 +135,6 @@ class AtomZipCompressor:
         delta_data, first_byte = delta_encode(data)
         lzma_data = self._lzma_compress(delta_data)
 
-        # 额外头部: first_byte (1字节)
         extra = bytearray()
         extra.append(first_byte)
 
@@ -137,25 +147,29 @@ class AtomZipCompressor:
                                   extra_header=bytes(extra))
 
     def _strategy_bwt(self, data: bytes) -> bytes:
-        """策略2: BWT + LZMA2 RAW (不加 MTF)。
+        """策略2: BWT (全文件单块) + LZMA2 RAW (不加 MTF)。
 
         BWT 聚簇相似上下文的字符，使 LZMA2 的 LZ77 匹配器
         能找到更长的匹配。不加 MTF 是因为 MTF 会打乱字节
         分布，反而损害 LZMA2 的上下文建模。
+        使用全文件单块避免块边界信息丢失。
         """
-        # 阶段1: BWT 分块编码
-        bwt_data, block_info = bwt_encode(data, BWT_BLOCK_SIZE)
+        # 阶段1: BWT 全文件单块编码 (block_size=0 表示全文件)
+        bwt_data, block_info = bwt_encode(data, block_size=0)
 
-        # 阶段2: LZMA2 RAW 压缩 (直接对 BWT 输出压缩，不加 MTF)
-        lzma_data = self._lzma_compress(bwt_data)
+        # 阶段2: LZMA2 RAW 压缩
+        # 对 BWT 后的数据，使用匹配数据大小的字典以获得最佳效果
+        dict_size = min(max(1 << 16, len(data)), 1 << 28)  # 64KB ~ 256MB
+        lzma_data = self._lzma_compress(bwt_data, dict_size=dict_size)
 
         # 额外头部: BWT 块信息
         extra = serialize_block_info(block_info)
 
         if self.verbose:
             print(f"  BWT: {len(data):,} -> {len(bwt_data):,} 字节 "
-                  f"({len(block_info)} 个块)")
-            print(f"  LZMA2: {len(bwt_data):,} -> {len(lzma_data):,} 字节")
+                  f"({len(block_info)} 个块, 全文件单块)")
+            print(f"  LZMA2: {len(bwt_data):,} -> {len(lzma_data):,} 字节 "
+                  f"(字典: {dict_size >> 20}MB)")
 
         return self._build_output(data, lzma_data, strategy=2,
                                   extra_header=extra)
@@ -164,10 +178,10 @@ class AtomZipCompressor:
     #  内部工具方法
     # ─────────────────────────────────────────
 
-    def _lzma_compress(self, data: bytes) -> bytes:
+    def _lzma_compress(self, data: bytes, dict_size: int = 0) -> bytes:
         """使用 LZMA2 RAW 格式极限压缩（无XZ容器开销）。"""
         preset = min(9, max(6, self.level))
-        filters = _get_lzma_filters(preset)
+        filters = _get_lzma_filters(preset, dict_size=dict_size)
         return lzma.compress(data, format=lzma.FORMAT_RAW, filters=filters)
 
     def _build_output(self, data: bytes, lzma_data: bytes,

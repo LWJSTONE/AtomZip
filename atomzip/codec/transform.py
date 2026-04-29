@@ -1,22 +1,26 @@
 """
-AtomZip 数据变换模块 — BWT / MTF / Delta 变换
+AtomZip 数据变换模块 — BWT / Delta / 序列化
 
 提供压缩流水线使用的数据变换:
   - BWT (Burrows-Wheeler 变换): 按上下文聚簇字符，使相似内容聚集
-  - MTF (Move-to-Front 变换): 将频繁出现的字符转换为小整数值
   - Delta (差分编码): 编码相邻字节的差值，降低数值幅度
 
-创新策略 "Delta + BWT + MTF":
-  先对数据做差分编码使数值变小的同时保留结构特征，
-  再做 BWT 聚簇相似差分值，最后 MTF 转换为大量零和小值，
-  使后续 LZMA2 压缩效率大幅提升。
+核心发现:
+  BWT + LZMA2 (不加 MTF) 的组合比 BWT + MTF + LZMA2 效果更好。
+  原因: MTF 虽然产生了大量零值，但同时打乱了字节的空间局部性，
+  使 LZMA2 的 LZ77 匹配器无法利用跨块的长距离重复。
+  不加 MTF 时，BWT 输出保持了"相同上下文的字符聚簇"这一关键性质，
+  LZMA2 能在聚簇区域找到高效的长匹配。
+
+BWT 块策略:
+  使用整个文件作为单个 BWT 块。虽然 O(n log² n) 复杂度对大文件
+  速度较慢，但单块 BWT 的压缩效果远优于分块（避免块边界信息丢失）。
+  对于超过 2MB 的文件，退回到不使用 BWT 策略。
 """
 
 import struct
 from typing import Tuple, List
 
-# BWT 分块大小 (64KB，兼顾压缩效果和速度)
-BWT_BLOCK_SIZE = 1 << 16  # 65536
 # 允许使用 BWT 策略的最大数据大小 (2MB)
 BWT_MAX_DATA_SIZE = 2 << 20
 
@@ -140,11 +144,13 @@ def bwt_decode_block(bwt: bytes, orig_idx: int) -> bytes:
     return bytes(result)
 
 
-def bwt_encode(data: bytes, block_size: int = BWT_BLOCK_SIZE) -> Tuple[bytes, List[Tuple[int, int]]]:
+def bwt_encode(data: bytes, block_size: int = 0) -> Tuple[bytes, List[Tuple[int, int]]]:
     """
     分块 BWT 编码。
 
+    block_size=0 表示使用整个文件作为单个块 (最优压缩)。
     对数据按 block_size 分块，对每块独立做 BWT。
+
     返回:
         (bwt_data, block_info)
         bwt_data: 所有 BWT 块拼接后的数据
@@ -152,6 +158,11 @@ def bwt_encode(data: bytes, block_size: int = BWT_BLOCK_SIZE) -> Tuple[bytes, Li
     """
     if len(data) == 0:
         return b'', []
+
+    # block_size=0 表示全文件单块
+    if block_size == 0 or block_size >= len(data):
+        bwt, orig_idx = bwt_encode_block(data)
+        return bwt, [(orig_idx, len(data))]
 
     blocks = []
     offset = 0
@@ -191,53 +202,6 @@ def bwt_decode(bwt_data: bytes, block_info: List[Tuple[int, int]]) -> bytes:
 
 
 # ─────────────────────────────────────────────
-#  MTF (Move-to-Front Transform)
-# ─────────────────────────────────────────────
-
-def mtf_encode(data: bytes) -> bytes:
-    """
-    Move-to-Front 编码。
-
-    维护一个 0-255 的字符表，每遇到一个字符就输出它在表中的
-    当前位置，然后将该字符移到表头。频繁出现的字符会变成小值
-    (如 0, 1, 2)，使后续压缩更高效。
-    """
-    if not data:
-        return b''
-
-    # 使用列表模拟字符表
-    alphabet = list(range(256))
-    result = bytearray(len(data))
-
-    for i, c in enumerate(data):
-        idx = alphabet.index(c)
-        result[i] = idx
-        if idx > 0:
-            alphabet.insert(0, alphabet.pop(idx))
-
-    return bytes(result)
-
-
-def mtf_decode(data: bytes) -> bytes:
-    """
-    Move-to-Front 解码 (逆变换)。
-    """
-    if not data:
-        return b''
-
-    alphabet = list(range(256))
-    result = bytearray(len(data))
-
-    for i, idx in enumerate(data):
-        c = alphabet[idx]
-        result[i] = c
-        if idx > 0:
-            alphabet.insert(0, alphabet.pop(idx))
-
-    return bytes(result)
-
-
-# ─────────────────────────────────────────────
 #  Delta (差分编码)
 # ─────────────────────────────────────────────
 
@@ -258,8 +222,6 @@ def delta_encode(data: bytes) -> Tuple[bytes, int]:
 
     first_byte = data[0]
     result = bytearray(len(data))
-    result[0] = data[0]  # 第一个字节保留原值 (或设为 0)
-    # 实际实现: 第一个字节存为 0，原始首字节存在 header 中
     result[0] = 0
     for i in range(1, len(data)):
         result[i] = (data[i] - data[i - 1]) % 256
@@ -287,12 +249,23 @@ def delta_decode(data: bytes, first_byte: int) -> bytes:
 # ─────────────────────────────────────────────
 
 def serialize_block_info(block_info: List[Tuple[int, int]]) -> bytes:
-    """序列化 BWT 块信息: [(orig_idx, block_size), ...]"""
+    """
+    序列化 BWT 块信息: [(orig_idx, block_size), ...]
+
+    格式:
+      2字节: 块数量
+      4字节: 最后一个块的大小 (用于检测非均匀分块)
+      对每个块:
+        4字节: orig_idx
+        4字节: 实际块大小
+    """
     result = bytearray()
     result.extend(struct.pack('>H', len(block_info)))  # num_blocks (uint16)
-    result.extend(struct.pack('>I', block_info[0][1] if block_info else BWT_BLOCK_SIZE))  # block_size (uint32)
-    for orig_idx, _ in block_info:
-        result.extend(struct.pack('>I', orig_idx))  # orig_idx (uint32)
+
+    for orig_idx, block_size in block_info:
+        result.extend(struct.pack('>I', orig_idx))   # orig_idx (uint32)
+        result.extend(struct.pack('>I', block_size)) # block_size (uint32)
+
     return bytes(result)
 
 
@@ -300,12 +273,12 @@ def deserialize_block_info(data: bytes, offset: int = 0) -> Tuple[List[Tuple[int
     """反序列化 BWT 块信息。"""
     num_blocks = struct.unpack('>H', data[offset:offset + 2])[0]
     offset += 2
-    block_size = struct.unpack('>I', data[offset:offset + 4])[0]
-    offset += 4
 
     block_info = []
     for _ in range(num_blocks):
         orig_idx = struct.unpack('>I', data[offset:offset + 4])[0]
+        offset += 4
+        block_size = struct.unpack('>I', data[offset:offset + 4])[0]
         offset += 4
         block_info.append((orig_idx, block_size))
 
