@@ -1,22 +1,25 @@
 """
-AtomZip 解压引擎 — DRAC v3 逆向流水线
+AtomZip 解压引擎 — DRAC v4 逆向流水线
 
 根据压缩策略逆向执行:
   策略0: LZMA2 RAW 解压
-  策略1: LZMA2 RAW 解压 → RLE 解码
-  策略2: LZMA2 RAW 解压 → BPE 逆替换 → RLE 解码
+  策略1: LZMA2 RAW 解压 → Delta 解码
+  策略2: LZMA2 RAW 解压 → BWT 解码
 """
 
 import struct
 import time
 import lzma
 
-from .pattern import PatternExtractor
+from .transform import (
+    bwt_decode, delta_decode,
+    deserialize_block_info,
+)
 from .compress import ATOMZIP_MAGIC, FORMAT_VERSION, _get_lzma_filters
 
 
 class AtomZipDecompressor:
-    """DRAC v3 解压器"""
+    """DRAC v4 解压器"""
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -27,7 +30,7 @@ class AtomZipDecompressor:
         offset = 0
 
         # === 解析文件头 ===
-        if len(data) < 16:
+        if len(data) < 12:
             raise ValueError("数据过短，不是有效的 AtomZip 文件")
 
         # 魔数验证
@@ -50,37 +53,18 @@ class AtomZipDecompressor:
         strategy = data[offset]
         offset += 1
 
-        # 标志位
-        flags = struct.unpack('>H', data[offset:offset + 2])[0]
+        # 额外头部大小
+        extra_header_size = struct.unpack('>H', data[offset:offset + 2])[0]
         offset += 2
 
         if original_size == 0:
             if self.verbose:
-                print("[AtomZip v3] 空文件，无需解压")
+                print("[AtomZip v4] 空文件，无需解压")
             return b''
 
-        # === 解析 RLE 条目 ===
-        rle_entries = []
-        if flags & 0x01:
-            num_entries = struct.unpack('>H', data[offset:offset + 2])[0]
-            offset += 2
-            for _ in range(num_entries):
-                pos = struct.unpack('>I', data[offset:offset + 4])[0]
-                offset += 4
-                byte_val = data[offset]
-                offset += 1
-                run_len = struct.unpack('>H', data[offset:offset + 2])[0]
-                offset += 2
-                rle_entries.append((pos, byte_val, run_len))
-
-        # === 解析 BPE 规则 ===
-        rules_data_len = struct.unpack('>H', data[offset:offset + 2])[0]
-        offset += 2
-        rules = []
-        if rules_data_len > 0:
-            rules_data = data[offset:offset + rules_data_len]
-            offset += rules_data_len
-            rules, _ = PatternExtractor.deserialize_rules(rules_data)
+        # 读取额外头部 (策略元数据)
+        extra_header = data[offset:offset + extra_header_size]
+        offset += extra_header_size
 
         # === 解析 LZMA2 RAW 数据 ===
         lzma_data_len = struct.unpack('>I', data[offset:offset + 4])[0]
@@ -91,46 +75,29 @@ class AtomZipDecompressor:
         # 阶段1: LZMA2 RAW 解压
         filters = _get_lzma_filters(preset=9)
         intermediate = lzma.decompress(lzma_data, format=lzma.FORMAT_RAW,
-                                        filters=filters)
+                                       filters=filters)
 
-        # 阶段2: BPE 逆替换
-        if rules and (flags & 0x02):
-            intermediate = PatternExtractor.apply_rules_reverse(intermediate, rules)
-
-        # 阶段3: RLE 解码
-        if rle_entries and (flags & 0x01):
-            intermediate = self._rle_decode(intermediate, rle_entries)
+        # 阶段2: 根据策略逆变换
+        if strategy == 0:
+            # 策略0: 无额外变换
+            result = intermediate
+        elif strategy == 1:
+            # 策略1: Delta 解码
+            first_byte = extra_header[0]
+            result = delta_decode(intermediate, first_byte)
+        elif strategy == 2:
+            # 策略2: BWT 解码 (不需要 MTF 逆变换)
+            block_info, _ = deserialize_block_info(extra_header)
+            result = bwt_decode(intermediate, block_info)
+        else:
+            raise ValueError(f"未知的压缩策略: {strategy}")
 
         # 截取到原始大小
-        result = intermediate[:original_size]
+        result = result[:original_size]
 
         elapsed = time.time() - start_time
         if self.verbose:
-            print(f"[AtomZip v3] 解压完成: {len(data):,} -> {len(result):,} 字节 "
-                  f"(耗时: {elapsed:.3f}秒)")
+            print(f"[AtomZip v4] 解压完成: {len(data):,} -> {len(result):,} 字节 "
+                  f"(耗时: {elapsed:.3f}秒, 策略: {strategy})")
 
         return result
-
-    def _rle_decode(self, data: bytes, rle_entries: list) -> bytes:
-        """RLE 解码: 将编码的游程恢复为原始数据。"""
-        if not rle_entries:
-            return data
-
-        sorted_entries = sorted(rle_entries, key=lambda x: x[0])
-        result = bytearray()
-        src_pos = 0
-
-        for entry_pos, byte_val, run_len in sorted_entries:
-            # 复制游程位置之前的普通数据
-            if src_pos < entry_pos:
-                result.extend(data[src_pos:entry_pos])
-            # 展开游程
-            result.extend(bytes([byte_val]) * run_len)
-            # 跳过编码表示(3个字节 + 2字节长度 = 5字节)
-            src_pos = entry_pos + 5
-
-        # 复制剩余数据
-        if src_pos < len(data):
-            result.extend(data[src_pos:])
-
-        return bytes(result)
