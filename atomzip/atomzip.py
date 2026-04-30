@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-AtomZip — 动态递归自适应压缩 (DRAC) v4 命令行工具
+AtomZip — 极限压缩引擎 v6 命令行工具
 
-原创压缩算法，基于 BWT 上下文聚簇 + LZMA2 RAW 极限压缩。
+原创压缩算法，基于 C加速全文件BWT + 穷举参数搜索 + 14+策略竞争。
 
-核心创新: BWT + LZMA2 (不加 MTF)
-  BWT 将相似上下文的字符聚簇在一起，使 LZMA2 的 LZ77
-  匹配器能找到更长的匹配序列。不同于 bzip2 (BWT+MTF+Huffman)，
-  不加 MTF 是因为 MTF 会打乱字节的空间局部性，反而损害
-  LZMA2 的上下文建模能力。
+核心创新: C语言BWT引擎 + 全文件BWT + 穷举LZMA2参数
+  v6 使用C语言实现BWT变换(10MB仅需3秒)，消除大小限制。
+  全文件BWT使LZMA2能捕获所有长程重复，实现超高压缩比。
+  穷举LZMA2参数(lc/lp/pb)和多种预处理策略竞争选择最优结果。
 
 用法:
   python atomzip.py compress   <输入文件> <输出文件>  [-v] [--level 级别]
@@ -31,10 +30,10 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from codec.compress_v5 import AtomZipCompressor
-from codec.decompress_v5 import AtomZipDecompressor
+from codec.compress_v7 import AtomZipCompressor
+from codec.decompress_v7 import AtomZipDecompressor
 
-__version__ = "5.0.0"
+__version__ = "7.0.0"
 __author__ = "AtomZip Project"
 
 
