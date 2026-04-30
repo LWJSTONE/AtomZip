@@ -30,10 +30,10 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from codec.compress_v9 import AtomZipCompressor
-from codec.decompress_v9 import AtomZipDecompressor
+from codec.compress_v10 import AtomZipCompressor
+from codec.decompress_v10 import AtomZipDecompressor
 
-__version__ = "9.0.0"
+__version__ = "10.0.0"
 __author__ = "AtomZip Project"
 
 
@@ -412,7 +412,7 @@ def main():
     """命令行入口。"""
     parser = argparse.ArgumentParser(
         prog='atomzip',
-        description='AtomZip — 极限压缩引擎 v9 (深度结构提取 + 全局去重 + 多轮压缩)',
+        description='AtomZip — 极限压缩引擎 v10 (Mega字典 + 增强结构提取 + 多策略竞争)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
@@ -427,13 +427,14 @@ def main():
   4-6: 均衡压缩 (LZMA2 + Delta + BWT)
   7-9: 极限压缩 (14种策略竞争+穷举参数，自动选择最优结果)
 
-v5 算法核心创新:
-  多策略竞争 + 智能预处理 + 穷举参数搜索
-  - BWT 上下文聚簇 + LZMA2 RAW 极限压缩
-  - RLE/文本字典/JSON键去重/日志模板/列转置等高级预处理
-  - 穷举 LZMA2 参数组合 (lc/lp/pb/dict_size)
-  - 14种压缩策略竞争，自动选择最小输出
-  使用 LZMA2 RAW 格式（无 XZ 容器），节省约 56 字节开销。
+v10 算法核心创新:
+  Mega静态字典 + 增强结构提取 + 多策略竞争
+  - 250个高频英文词1字节编码，256个次高频词2字节编码
+  - 增强JSON列式编码（枚举位压缩、日期delta、浮点4/8字节自适应）
+  - 快速CSV列式编码（智能类型检测、枚举位压缩）
+  - 行级去重（日志/CSV重复行替换为引用）
+  - 30+种压缩策略竞争，自动选择最小输出
+  - 穷举 LZMA2 参数组合 (lc/lp/pb)
 """
     )
 
