@@ -30,10 +30,10 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from codec.compress_v7 import AtomZipCompressor
-from codec.decompress_v7 import AtomZipDecompressor
+from codec.compress_v9 import AtomZipCompressor
+from codec.decompress_v9 import AtomZipDecompressor
 
-__version__ = "7.0.0"
+__version__ = "9.0.0"
 __author__ = "AtomZip Project"
 
 
@@ -412,7 +412,7 @@ def main():
     """命令行入口。"""
     parser = argparse.ArgumentParser(
         prog='atomzip',
-        description='AtomZip — 动态递归自适应压缩 (DRAC) v5',
+        description='AtomZip — 极限压缩引擎 v9 (深度结构提取 + 全局去重 + 多轮压缩)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
