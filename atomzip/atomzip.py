@@ -31,10 +31,10 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from codec.compress import AtomZipCompressor
-from codec.decompress import AtomZipDecompressor
+from codec.compress_v5 import AtomZipCompressor
+from codec.decompress_v5 import AtomZipDecompressor
 
-__version__ = "4.0.0"
+__version__ = "5.0.0"
 __author__ = "AtomZip Project"
 
 
@@ -60,7 +60,7 @@ def compress_file(input_path: str, output_path: str, level: int = 5,
 
     if verbose:
         print(f"╔══════════════════════════════════════════╗")
-        print(f"║        AtomZip v{__version__} 压缩引擎          ║")
+        print(f"║        AtomZip v{__version__} 极限压缩引擎       ║")
         print(f"╚══════════════════════════════════════════╝")
         print(f"  输入文件: {input_path}")
         print(f"  输出文件: {output_path}")
@@ -230,7 +230,7 @@ def run_benchmark(input_path: str, verbose: bool = False):
 
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
-    print("║              AtomZip v4 基准测试 - 多算法对比                ║")
+    print("║              AtomZip v5 基准测试 - 多算法对比                ║")
     print("╚══════════════════════════════════════════════════════════════╝")
     print(f"  测试文件数: {len(files)}")
     print()
@@ -413,7 +413,7 @@ def main():
     """命令行入口。"""
     parser = argparse.ArgumentParser(
         prog='atomzip',
-        description='AtomZip — 动态递归自适应压缩 (DRAC) v4',
+        description='AtomZip — 动态递归自适应压缩 (DRAC) v5',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
@@ -425,14 +425,15 @@ def main():
 
 压缩级别 (1-9):
   1-3: 快速压缩 (仅 LZMA2)
-  4-6: 均衡压缩 (LZMA2 + Delta，默认: 5)
-  7-9: 极限压缩 (多策略竞争含 BWT，自动选择最优结果)
+  4-6: 均衡压缩 (LZMA2 + Delta + BWT)
+  7-9: 极限压缩 (14种策略竞争+穷举参数，自动选择最优结果)
 
-算法核心创新:
-  BWT 上下文聚簇 + LZMA2 RAW 极限压缩。
-  BWT 将相似上下文的字符聚簇，使 LZMA2 的 LZ77 匹配器能找到
-  更长匹配。不加 MTF（不同于 bzip2），因为 MTF 会打乱字节
-  空间局部性，损害 LZMA2 的上下文建模能力。
+v5 算法核心创新:
+  多策略竞争 + 智能预处理 + 穷举参数搜索
+  - BWT 上下文聚簇 + LZMA2 RAW 极限压缩
+  - RLE/文本字典/JSON键去重/日志模板/列转置等高级预处理
+  - 穷举 LZMA2 参数组合 (lc/lp/pb/dict_size)
+  - 14种压缩策略竞争，自动选择最小输出
   使用 LZMA2 RAW 格式（无 XZ 容器），节省约 56 字节开销。
 """
     )

@@ -16,8 +16,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from codec.compress import AtomZipCompressor
-from codec.decompress import AtomZipDecompressor
+from codec.compress_v5 import AtomZipCompressor
+from codec.decompress_v5 import AtomZipDecompressor
 
 
 def benchmark_atomzip(filepath: str, level: int = 9) -> dict:
@@ -130,7 +130,7 @@ def main():
 
     print()
     print("╔══════════════════════════════════════════════════════════════════════════╗")
-    print("║           AtomZip v4 基准测试 — 与 LZMA (7z极限) 和 gzip 对比          ║")
+    print("║           AtomZip v5 基准测试 — 与 LZMA (7z极限) 和 gzip 对比          ║")
     print("╚══════════════════════════════════════════════════════════════════════════╝")
     print()
 
